@@ -1,19 +1,11 @@
 # Парсер НСПД - зависимости
-# Python 3.11+
+# Python 3.8+
 
 # HTTP клиент
 requests>=2.31.0
-urllib3>=2.1.0
-
-# Selenium и WebDriver
-selenium>=4.16.0
-webdriver-manager>=4.0.1
 
 # Работа с Excel
 openpyxl>=3.1.2
 
-# Утилиты
-python-dateutil>=2.8.2
-
-# Сборка .exe (для разработки)
-pyinstaller>=6.3.0
+# Интеграция с Excel (для запуска из Excel)
+xlwings>=0.30.0
