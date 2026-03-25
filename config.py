@@ -9,14 +9,18 @@ from dataclasses import dataclass
 class APIConfig:
     """Настройки API"""
     base_url: str = "https://nspd.gov.ru"
-    search_endpoint: str = "/api/search"
-    details_endpoint: str = "/api/details"
+    # РЕАЛЬНЫЕ ENDPOINTS из DevTools:
+    search_endpoint: str = "/api/geoportal/v2/search/geoportal"
+    details_endpoint: str = "/api/geoportal/v2/object"  # Примерный, проверьте в DevTools
     timeout: int = 30
     verify_ssl: bool = False  # Самоподписанный сертификат
     max_retries: int = 3
     retry_delay: float = 5.0
     request_delay_min: float = 1.0
     request_delay_max: float = 2.0
+
+    # Дополнительные параметры для НСПД API
+    thematic_search_id: int = 1  # Из реального запроса
 
 
 @dataclass
