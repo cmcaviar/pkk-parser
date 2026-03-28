@@ -124,53 +124,86 @@ def process_from_excel(sheet: Optional[xw.Sheet] = None):
     if sheet is None:
         sheet = xw.books.active.sheets.active
 
+    print("\n" + "=" * 80)
+    print("НАЧАЛО ОБРАБОТКИ")
+    print("=" * 80)
+
     try:
         # Обновляем status bar
         xw.apps.active.status_bar = "Чтение кадастровых номеров..."
+        print("\n📖 Чтение кадастровых номеров из колонки A...")
 
         # Читаем кадастровые номера из колонки A
         cadastral_numbers = read_cadastral_numbers_from_sheet(sheet, start_row=2)
+        print(f"✅ Найдено номеров: {len(cadastral_numbers)}")
+        for idx, cn in enumerate(cadastral_numbers, 1):
+            print(f"   {idx}. {cn}")
 
         if not cadastral_numbers:
+            print("❌ Не найдены кадастровые номера в колонке A")
             xw.apps.active.alert("Не найдены кадастровые номера в колонке A (начиная со строки 2)")
             return
 
         xw.apps.active.status_bar = f"Найдено номеров: {len(cadastral_numbers)}"
 
         # Очищаем старые данные (кроме колонки A)
+        print("\n🧹 Очистка старых данных...")
         last_row = sheet.cells(sheet.cells.last_cell.row, 1).end('up').row
         if last_row > 1:
             clear_range = sheet.range((1, 2), (last_row, len(COLUMNS)))
             clear_range.clear_contents()
+            print(f"✅ Очищено строк: {last_row}")
 
         # Записываем заголовки
+        print("\n📝 Запись заголовков...")
         write_headers_to_sheet(sheet, start_row=1)
+        print("✅ Заголовки записаны")
 
         # Создаем API клиент
+        print("\n🔌 Создание API клиента...")
         client = NSPDAPIClient()
         current_row = 2  # Начинаем со второй строки (после заголовков)
+
+        print("\n" + "=" * 80)
+        print("ОБРАБОТКА НОМЕРОВ")
+        print("=" * 80)
 
         try:
             # Обрабатываем каждый номер
             for idx, cadastral_number in enumerate(cadastral_numbers, 1):
+                print(f"\n{'─' * 80}")
+                print(f"[{idx}/{len(cadastral_numbers)}] {cadastral_number}")
+                print(f"{'─' * 80}")
+
                 xw.apps.active.status_bar = f"Обработка [{idx}/{len(cadastral_numbers)}]: {cadastral_number}"
 
                 try:
                     # Получаем данные
+                    print("⏳ Загрузка данных участка...")
                     result = client.get_full_parcel_info_with_objects(cadastral_number)
+
+                    parcel = result['parcel_data']
+                    objects = result['objects_data']
+
+                    print(f"✅ Участок: {parcel.address[:60]}...")
+                    print(f"✅ Объектов найдено: {len(objects)}")
 
                     # Формируем ParseResult
                     parse_result = ParseResult(
                         cadastral_number=cadastral_number,
-                        parcel=result['parcel_data'],
-                        objects=result['objects_data'],
+                        parcel=parcel,
+                        objects=objects,
                         status="Успешно"
                     )
 
                     # Записываем в Excel
+                    print(f"📝 Запись в Excel (строка {current_row})...")
+                    rows_before = current_row
                     current_row = write_result_to_sheet(sheet, parse_result, current_row)
+                    print(f"✅ Записано строк: {current_row - rows_before}")
 
                 except Exception as e:
+                    print(f"❌ Ошибка: {e}")
                     # Записываем строку с ошибкой
                     sheet.cells(current_row, 1).value = cadastral_number
                     sheet.cells(current_row, 2).value = f"ОШИБКА: {str(e)}"
@@ -178,12 +211,26 @@ def process_from_excel(sheet: Optional[xw.Sheet] = None):
                     current_row += 1
 
         finally:
+            print("\n🔒 Закрытие API клиента...")
             client.close()
 
         # Автоподбор ширины колонок
-        sheet.autofit(axis='columns')
+        print("\n🎨 Автоподбор ширины колонок...")
+        try:
+            sheet.autofit(axis='columns')
+            print("✅ Ширина колонок настроена")
+        except Exception as e:
+            print(f"⚠️  Не удалось автоподобрать ширину колонок: {e}")
+            # Не критично, продолжаем
 
         # Завершение
+        print("\n" + "=" * 80)
+        print("✅ ОБРАБОТКА ЗАВЕРШЕНА!")
+        print("=" * 80)
+        print(f"\n📊 Статистика:")
+        print(f"   Обработано номеров: {len(cadastral_numbers)}")
+        print(f"   Строк добавлено: {current_row - 2}")
+
         xw.apps.active.status_bar = f"✅ Готово! Обработано: {len(cadastral_numbers)}"
         xw.apps.active.alert(
             f"Обработка завершена!\n\nОбработано номеров: {len(cadastral_numbers)}\nСтрок добавлено: {current_row - 2}",
@@ -191,12 +238,17 @@ def process_from_excel(sheet: Optional[xw.Sheet] = None):
         )
 
     except Exception as e:
+        print(f"\n❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        import traceback
+        traceback.print_exc()
+
         xw.apps.active.status_bar = f"❌ Ошибка: {str(e)}"
         xw.apps.active.alert(f"Произошла ошибка:\n\n{str(e)}", title="Ошибка")
         raise
 
     finally:
         xw.apps.active.status_bar = False
+        print("\n" + "=" * 80)
 
 
 def process_single_from_excel(cadastral_number: str, sheet: Optional[xw.Sheet] = None):
