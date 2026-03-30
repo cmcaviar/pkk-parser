@@ -64,8 +64,9 @@ def test_paste():
     text_widget.bind("<FocusIn>", on_focus_in)
     text_widget.bind("<FocusOut>", on_focus_out)
     text_widget.bind("<Key>", on_key)
-    text_widget.bind("<Control-v>", on_paste)  # Windows/Linux
-    text_widget.bind("<Command-v>", on_paste)  # macOS
+    text_widget.bind("<<Paste>>", on_paste)  # Универсальное событие вставки (надёжнее)
+    text_widget.bind("<Control-v>", on_paste)  # Windows/Linux (дополнительно)
+    text_widget.bind("<Command-v>", on_paste)  # macOS (дополнительно)
 
     # Кнопка проверки
     def check_content():

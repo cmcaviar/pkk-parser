@@ -90,9 +90,10 @@ class NSPDParserGUI:
         self.text_input.bind("<FocusOut>", self._on_input_focus_out)
         self.text_input.bind("<Key>", self._on_input_key)
 
-        # Обработка вставки (Ctrl+V / Cmd+V)
-        self.text_input.bind("<Control-v>", self._on_paste)  # Windows/Linux
-        self.text_input.bind("<Command-v>", self._on_paste)  # macOS
+        # Обработка вставки - используем виртуальное событие <<Paste>> (надёжнее)
+        self.text_input.bind("<<Paste>>", self._on_paste)  # Универсальное событие вставки
+        self.text_input.bind("<Control-v>", self._on_paste)  # Windows/Linux (дополнительно)
+        self.text_input.bind("<Command-v>", self._on_paste)  # macOS (дополнительно)
 
         # Кнопки управления
         buttons_frame = ttk.Frame(self.root, padding="10")
