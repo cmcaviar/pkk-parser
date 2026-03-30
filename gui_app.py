@@ -10,6 +10,7 @@ from typing import List
 from datetime import datetime
 import sys
 import os
+import csv
 
 from api_client import NSPDAPIClient
 from models import ParseResult
@@ -101,11 +102,18 @@ class NSPDParserGUI:
 
         self.btn_process = ttk.Button(
             buttons_frame,
-            text="📥 Загрузить данные",
+            text="📥 Старт",
             command=self._on_process_click,
             style="Accent.TButton"
         )
         self.btn_process.pack(side=tk.LEFT, padx=5)
+
+        self.btn_import_csv = ttk.Button(
+            buttons_frame,
+            text="📄 Импорт CSV",
+            command=self._on_import_csv_click
+        )
+        self.btn_import_csv.pack(side=tk.LEFT, padx=5)
 
         self.btn_clear = ttk.Button(
             buttons_frame,
@@ -177,6 +185,176 @@ class NSPDParserGUI:
             self.is_placeholder_active = False
         # Tkinter сам обработает вставку после нашего обработчика
         return None  # Продолжить стандартную обработку
+
+    def _on_import_csv_click(self):
+        """Обработка импорта CSV файла"""
+        # Выбор CSV файла
+        csv_file = filedialog.askopenfilename(
+            title="Выберите CSV файл с кадастровыми номерами",
+            filetypes=[
+                ("CSV файлы", "*.csv"),
+                ("Текстовые файлы", "*.txt"),
+                ("Все файлы", "*.*")
+            ]
+        )
+
+        if not csv_file:
+            return  # Пользователь отменил выбор
+
+        try:
+            # Читаем кадастровые номера из CSV
+            cadastral_numbers = self._parse_csv_file(csv_file)
+
+            if not cadastral_numbers:
+                messagebox.showwarning(
+                    "Внимание",
+                    "В файле не найдено кадастровых номеров!\n\n"
+                    "Убедитесь, что файл содержит номера в формате:\n"
+                    "77:05:0001016:22\n"
+                    "или в CSV с колонкой 'cadastral_number' или 'кадастровый_номер'"
+                )
+                return
+
+            # Удаляем placeholder если активен
+            if self.is_placeholder_active:
+                self.text_input.delete("1.0", tk.END)
+                self.text_input.config(fg="black")
+                self.is_placeholder_active = False
+            else:
+                # Если уже есть текст, добавляем с новой строки
+                current_text = self.text_input.get("1.0", tk.END).strip()
+                if current_text:
+                    self.text_input.insert(tk.END, "\n")
+
+            # Вставляем номера
+            self.text_input.insert(tk.END, "\n".join(cadastral_numbers))
+
+            # Показываем сообщение об успехе
+            messagebox.showinfo(
+                "Успех",
+                f"Импортировано кадастровых номеров: {len(cadastral_numbers)}\n\n"
+                f"Файл: {os.path.basename(csv_file)}"
+            )
+
+        except Exception as e:
+            messagebox.showerror(
+                "Ошибка импорта",
+                f"Не удалось импортировать CSV файл:\n\n{str(e)}"
+            )
+
+    def _parse_csv_file(self, file_path: str) -> List[str]:
+        """
+        Парсинг CSV файла для извлечения кадастровых номеров
+
+        Поддерживаемые форматы:
+        1. Один номер на строку (простой текстовый файл)
+        2. CSV с колонкой 'cadastral_number' или 'кадастровый_номер'
+        3. CSV где первая колонка содержит номера
+        """
+        cadastral_numbers = []
+
+        # Определяем кодировку (пробуем UTF-8, затем Windows-1251)
+        encodings = ['utf-8', 'windows-1251', 'cp1251']
+        content = None
+
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    content = f.read()
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+        if content is None:
+            raise ValueError("Не удалось определить кодировку файла")
+
+        # Пробуем разные варианты парсинга
+        lines = content.strip().split('\n')
+
+        # Проверяем, является ли это CSV с заголовками
+        try:
+            # Пробуем как CSV
+            csv_reader = csv.DictReader(lines)
+            fieldnames = csv_reader.fieldnames
+
+            if fieldnames:
+                # Ищем колонку с кадастровыми номерами
+                cadastral_column = None
+                possible_names = [
+                    'cadastral_number', 'кадастровый_номер', 'кадастровый номер',
+                    'cadastral', 'кадастр', 'номер', 'number', 'cn'
+                ]
+
+                for field in fieldnames:
+                    if field.lower().strip() in possible_names:
+                        cadastral_column = field
+                        break
+
+                # Если не нашли по имени, берём первую колонку
+                if not cadastral_column:
+                    cadastral_column = fieldnames[0]
+
+                # Читаем номера из найденной колонки
+                for row in csv_reader:
+                    value = row.get(cadastral_column, '').strip()
+                    if value and self._is_valid_cadastral_number(value):
+                        cadastral_numbers.append(value)
+
+        except (csv.Error, KeyError):
+            pass
+
+        # Если CSV парсинг не дал результата, читаем построчно
+        if not cadastral_numbers:
+            for line in lines:
+                # Пропускаем пустые строки и комментарии
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+
+                # Если строка содержит запятую или точку с запятой, разбиваем
+                if ',' in line or ';' in line:
+                    separator = ',' if ',' in line else ';'
+                    parts = [p.strip() for p in line.split(separator)]
+                    for part in parts:
+                        if self._is_valid_cadastral_number(part):
+                            cadastral_numbers.append(part)
+                else:
+                    # Проверяем строку целиком
+                    if self._is_valid_cadastral_number(line):
+                        cadastral_numbers.append(line)
+
+        # Удаляем дубликаты, сохраняя порядок
+        seen = set()
+        unique_numbers = []
+        for num in cadastral_numbers:
+            if num not in seen:
+                seen.add(num)
+                unique_numbers.append(num)
+
+        return unique_numbers
+
+    def _is_valid_cadastral_number(self, value: str) -> bool:
+        """Проверка, похоже ли значение на кадастровый номер"""
+        # Базовая проверка: содержит цифры и двоеточия
+        # Формат: XX:XX:XXXXXXX:XX (могут быть вариации)
+        if not value:
+            return False
+
+        # Должен содержать хотя бы 2 двоеточия
+        if value.count(':') < 2:
+            return False
+
+        # Части должны содержать цифры
+        parts = value.split(':')
+        if len(parts) < 3:
+            return False
+
+        # Все части должны быть числовыми
+        for part in parts:
+            if not part.isdigit():
+                return False
+
+        return True
 
     def _on_clear_click(self):
         """Очистка полей"""
@@ -425,6 +603,7 @@ class NSPDParserGUI:
         def update():
             state = tk.NORMAL if enabled else tk.DISABLED
             self.btn_process.config(state=state)
+            self.btn_import_csv.config(state=state)
             self.btn_clear.config(state=state)
 
         self.root.after(0, update)
