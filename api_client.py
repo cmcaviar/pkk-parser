@@ -5,6 +5,8 @@ import requests
 import time
 import random
 import logging
+import platform
+import os
 from typing import Optional, Dict, Any, List
 from urllib3.exceptions import InsecureRequestWarning
 
@@ -22,7 +24,36 @@ class NSPDAPIClient:
 
     def __init__(self):
         self.session = requests.Session()
-        self.session.verify = config.api.verify_ssl
+
+        # Настройка SSL для Windows
+        if platform.system() == 'Windows':
+            # На Windows часто проблемы с SSL, поэтому явно отключаем проверку
+            self.session.verify = False
+            logger.debug("Windows: SSL проверка отключена")
+
+            # Также настраиваем адаптер для лучшей работы с SSL
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            # Создаём retry стратегию
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["HEAD", "GET", "OPTIONS"]
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            self.session.mount("https://", adapter)
+            self.session.mount("http://", adapter)
+            logger.debug("Windows: Настроен HTTPAdapter с retry стратегией")
+        else:
+            self.session.verify = config.api.verify_ssl
+            logger.debug(f"SSL проверка: {config.api.verify_ssl}")
+
+        # Определяем User-Agent в зависимости от ОС
+        user_agent = self._get_user_agent()
+        logger.debug(f"Используемый User-Agent: {user_agent}")
+        logger.debug(f"Платформа: {platform.system()} {platform.release()}")
 
         # Заголовки которые РЕАЛЬНО работают (из test_real_api.py)
         self.session.headers.update({
@@ -32,41 +63,86 @@ class NSPDAPIClient:
             'pragma': 'no-cache',
             'origin': 'https://nspd.gov.ru',
             'referer': 'https://nspd.gov.ru/map?thematic=PKK',
-            'user-agent': (
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/144.0.0.0 Safari/537.36'
-            ),
+            'user-agent': user_agent,
         })
         self.last_request_time = 0
 
         # Инициализируем cookies сессию через главную страницу
         self._init_session()
 
+    def _get_user_agent(self) -> str:
+        """
+        Получение User-Agent в зависимости от ОС
+
+        Returns:
+            Строка User-Agent соответствующая текущей ОС
+        """
+        system = platform.system()
+
+        if system == 'Windows':
+            return (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/144.0.0.0 Safari/537.36'
+            )
+        elif system == 'Darwin':  # macOS
+            return (
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/144.0.0.0 Safari/537.36'
+            )
+        else:  # Linux и другие
+            return (
+                'Mozilla/5.0 (X11; Linux x86_64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/144.0.0.0 Safari/537.36'
+            )
+
     def _init_session(self):
         """
         Инициализация сессии через главную страницу для получения cookies
         Это важно для обхода WAF/CDN защиты
         """
-        try:
-            logger.debug("Инициализация сессии...")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                logger.debug(f"Инициализация сессии (попытка {attempt + 1}/{max_attempts})...")
 
-            # Запрос к главной странице карты для получения cookies
-            response = self.session.get(
-                'https://nspd.gov.ru/map',
-                timeout=10,
-                verify=config.api.verify_ssl
-            )
+                # Запрос к главной странице карты для получения cookies
+                response = self.session.get(
+                    'https://nspd.gov.ru/map',
+                    timeout=10,
+                    verify=config.api.verify_ssl
+                )
 
-            if response.status_code == 200:
-                logger.debug(f"Сессия инициализирована. Cookies: {len(self.session.cookies)}")
-            else:
-                logger.warning(f"Не удалось инициализировать сессию: {response.status_code}")
+                logger.debug(f"Инициализация - статус: {response.status_code}")
+                logger.debug(f"Инициализация - Content-Type: {response.headers.get('content-type', 'unknown')}")
 
-        except Exception as e:
-            logger.warning(f"Ошибка инициализации сессии: {e}")
-            # Продолжаем работу даже если не удалось
-            pass
+                if response.status_code == 200:
+                    # Логируем полученные cookies детально
+                    cookies_list = [f"{cookie.name}={cookie.value[:20]}..." for cookie in self.session.cookies]
+                    logger.debug(f"Сессия инициализирована успешно")
+                    logger.debug(f"Получено cookies: {len(self.session.cookies)}")
+                    if cookies_list:
+                        logger.debug(f"Cookies: {', '.join(cookies_list)}")
+                    else:
+                        logger.warning("Внимание: Cookies не получены при инициализации")
+                    return  # Успех
+                else:
+                    logger.warning(f"Не удалось инициализировать сессию: {response.status_code}")
+                    logger.debug(f"Ответ (первые 500 символов): {response.text[:500]}")
+
+                    if attempt < max_attempts - 1:
+                        time.sleep(2)  # Пауза перед повтором
+
+            except Exception as e:
+                logger.warning(f"Ошибка инициализации сессии (попытка {attempt + 1}): {e}")
+                if attempt < max_attempts - 1:
+                    time.sleep(2)
+                else:
+                    logger.error("Не удалось инициализировать сессию после всех попыток")
+                    # Продолжаем работу даже если не удалось
+                    pass
 
     def _wait_between_requests(self):
         """Задержка между запросами"""
@@ -111,12 +187,15 @@ class NSPDAPIClient:
                     **kwargs
                 )
 
-                # Логирование статуса
+                # Логирование статуса и заголовков
                 logger.debug(f"Статус ответа: {response.status_code}")
+                logger.debug(f"Content-Type: {response.headers.get('content-type', 'unknown')}")
+                logger.debug(f"Content-Length: {response.headers.get('content-length', 'unknown')}")
 
                 # Обработка специфичных кодов
                 if response.status_code == 404:
                     logger.warning(f"Ресурс не найден (404): {url}")
+                    logger.debug(f"Ответ 404 (первые 500 символов): {response.text[:500]}")
                     return None
 
                 if response.status_code == 429:
@@ -126,6 +205,7 @@ class NSPDAPIClient:
 
                 if response.status_code >= 500:
                     logger.warning(f"Ошибка сервера ({response.status_code}), повтор...")
+                    logger.debug(f"Ответ сервера (первые 500 символов): {response.text[:500]}")
                     time.sleep(config.api.retry_delay * (attempt + 1))
                     continue
 
@@ -180,45 +260,106 @@ class NSPDAPIClient:
             'query': cadastral_number  # Изменено с 'cadastralNumber'
         }
 
+        logger.debug(f"Полный URL запроса: {url}")
+        logger.debug(f"Параметры запроса: {params}")
+
         response = self._make_request('GET', url, params=params)
         if not response:
+            logger.error(f"Не удалось получить ответ для {cadastral_number}")
             return None
 
+        # Диагностика: сохраняем проблемный ответ
         try:
+            response_text = response.text
+            logger.debug(f"Получен ответ длиной: {len(response_text)} символов")
+            logger.debug(f"Первые 1000 символов ответа: {response_text[:1000]}")
+
+            # Проверяем, не HTML ли это
+            if response_text.strip().startswith('<'):
+                logger.error(f"API вернул HTML вместо JSON! Первые 500 символов:")
+                logger.error(response_text[:500])
+                self._save_debug_response(cadastral_number, response_text, "html_error")
+                return None
+
             data = response.json()
-            logger.debug(f"Получен ответ: {len(str(data))} символов")
+            logger.debug(f"JSON успешно распарсен, размер: {len(str(data))} символов")
 
             # РЕАЛЬНАЯ СТРУКТУРА НСПД: {"data": {"features": [...]}}
             if 'data' not in data:
-                logger.error("Ответ не содержит поле 'data'")
+                logger.error(f"Ответ не содержит поле 'data'. Структура: {list(data.keys())}")
+                logger.debug(f"Полный ответ: {data}")
+                self._save_debug_response(cadastral_number, response_text, "no_data_field")
                 return None
 
             response_data = data['data']
 
             # Проверяем наличие features (GeoJSON)
             if 'features' not in response_data:
-                logger.error("Ответ не содержит поле 'features'")
+                logger.error(f"Ответ не содержит поле 'features'. Структура data: {list(response_data.keys())}")
+                logger.debug(f"Содержимое data: {response_data}")
+                self._save_debug_response(cadastral_number, response_text, "no_features_field")
                 return None
 
             features = response_data['features']
 
             if not isinstance(features, list):
                 logger.error(f"features не является массивом: {type(features)}")
+                self._save_debug_response(cadastral_number, response_text, "features_not_list")
                 return None
 
             if len(features) == 0:
                 logger.warning(f"Объект {cadastral_number} не найден (пустой массив features)")
+                logger.debug(f"Полный ответ data: {response_data}")
                 return None
 
             # Возвращаем первый найденный объект (весь feature со свойствами)
             feature = features[0]
             logger.info(f"Объект найден: {feature.get('properties', {}).get('label', cadastral_number)}")
+            logger.debug(f"Структура feature: id={feature.get('id')}, type={feature.get('type')}")
 
             return feature
 
         except ValueError as e:
-            logger.error(f"Ошибка парсинга JSON: {e}")
+            logger.error(f"Ошибка парсинга JSON для {cadastral_number}: {e}")
+            logger.error(f"Ответ (первые 1000 символов): {response.text[:1000]}")
+            self._save_debug_response(cadastral_number, response.text, "json_parse_error")
             return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при обработке ответа для {cadastral_number}: {e}")
+            logger.error(f"Тип ошибки: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return None
+
+    def _save_debug_response(self, cadastral_number: str, response_text: str, error_type: str):
+        """
+        Сохранение проблемного ответа API для диагностики
+
+        Args:
+            cadastral_number: Кадастровый номер
+            response_text: Текст ответа API
+            error_type: Тип ошибки
+        """
+        try:
+            # Создаём папку для дебага если нет
+            debug_dir = "debug_responses"
+            os.makedirs(debug_dir, exist_ok=True)
+
+            # Безопасное имя файла
+            safe_cn = cadastral_number.replace(':', '_')
+            filename = f"{debug_dir}/{safe_cn}_{error_type}_{int(time.time())}.txt"
+
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(f"Cadastral Number: {cadastral_number}\n")
+                f.write(f"Error Type: {error_type}\n")
+                f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Platform: {platform.system()} {platform.release()}\n")
+                f.write("="*80 + "\n")
+                f.write(response_text)
+
+            logger.debug(f"Проблемный ответ сохранён в {filename}")
+        except Exception as e:
+            logger.warning(f"Не удалось сохранить debug ответ: {e}")
 
     def get_parcel_details(self, parcel_id: str) -> Optional[Dict[str, Any]]:
         """
