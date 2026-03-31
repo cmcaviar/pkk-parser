@@ -11,6 +11,7 @@ from datetime import datetime
 import sys
 import os
 import csv
+import logging
 
 from api_client import NSPDAPIClient
 from models import ParseResult
@@ -29,6 +30,11 @@ class NSPDParserGUI:
         # Переменные
         self.is_processing = False
         self.api_client = None
+        self.dev_mode = tk.BooleanVar(value=False)  # Режим разработчика
+        self.log_file = None  # Файл для логов
+
+        # Настройка логирования
+        self._setup_logging()
 
         # Создаем интерфейс
         self._create_widgets()
@@ -44,6 +50,34 @@ class NSPDParserGUI:
         x = (self.root.winfo_screenwidth() // 2) - (width // 2)
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'{width}x{height}+{x}+{y}')
+
+    def _setup_logging(self):
+        """Настройка системы логирования"""
+        # Создаём логгер
+        self.logger = logging.getLogger('NSPDParser')
+        self.logger.setLevel(logging.DEBUG)  # Всегда DEBUG, но показываем по условию
+
+        # Очищаем предыдущие обработчики
+        self.logger.handlers.clear()
+
+        # Создаём папку для логов если нет
+        os.makedirs('logs', exist_ok=True)
+
+        # Файловый обработчик (всегда пишет DEBUG логи)
+        log_filename = f"logs/nspd_parser_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        self.log_file = log_filename
+        file_handler = logging.FileHandler(log_filename, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(file_formatter)
+        self.logger.addHandler(file_handler)
+
+        self.logger.info("="*80)
+        self.logger.info("НСПД Парсер запущен")
+        self.logger.info("="*80)
 
     def _create_widgets(self):
         """Создание виджетов интерфейса"""
@@ -115,7 +149,7 @@ class NSPDParserGUI:
 
         self.btn_import_csv = ttk.Button(
             buttons_frame,
-            text="📄 Импорт CSV",
+            text="📄 Импорт CSV/TXT",
             command=self._on_import_csv_click
         )
         self.btn_import_csv.pack(side=tk.LEFT, padx=5)
@@ -126,6 +160,23 @@ class NSPDParserGUI:
             command=self._on_clear_click
         )
         self.btn_clear.pack(side=tk.LEFT, padx=5)
+
+        # Dev режим чекбокс
+        self.dev_mode_check = ttk.Checkbutton(
+            buttons_frame,
+            text="🔧 Dev логи",
+            variable=self.dev_mode,
+            command=self._on_dev_mode_toggle
+        )
+        self.dev_mode_check.pack(side=tk.LEFT, padx=10)
+
+        # Кнопка экспорта логов
+        self.btn_export_log = ttk.Button(
+            buttons_frame,
+            text="📄 Экспорт логов",
+            command=self._on_export_log_click
+        )
+        self.btn_export_log.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(
             buttons_frame,
@@ -519,14 +570,19 @@ class NSPDParserGUI:
         self.is_processing = True
         self._set_buttons_state(False)
 
+        self._log_debug(f"Начало обработки {len(cadastral_numbers)} номеров")
+        self._log_debug(f"Выходной файл: {output_file}")
+
         results = []
         total = len(cadastral_numbers)
 
         try:
             # Создаем API клиент
             self._log("🔌 Создание API клиента...")
+            self._log_debug("Инициализация NSPDAPIClient...")
             self.api_client = NSPDAPIClient()
             self._log("✅ API клиент создан\n")
+            self._log_debug(f"API клиент: {type(self.api_client).__name__}")
 
             self._log("=" * 80)
             self._log("ОБРАБОТКА НОМЕРОВ")
@@ -539,14 +595,25 @@ class NSPDParserGUI:
                 self._log(f"\n{'─' * 80}")
                 self._log(f"[{idx}/{total}] {cadastral_number}")
                 self._log(f"{'─' * 80}")
+                self._log_debug(f"Начало обработки номера {cadastral_number}")
 
                 try:
                     # Получаем данные
                     self._log("⏳ Загрузка данных участка...")
+                    self._log_debug(f"Вызов get_full_parcel_info_with_objects({cadastral_number})")
+
+                    import time
+                    start_time = time.time()
                     result = self.api_client.get_full_parcel_info_with_objects(cadastral_number)
+                    elapsed = time.time() - start_time
+
+                    self._log_debug(f"API запрос выполнен за {elapsed:.2f} сек")
 
                     parcel = result['parcel_data']
                     objects = result['objects_data']
+
+                    self._log_debug(f"Parcel type: {type(parcel).__name__ if parcel else 'None'}")
+                    self._log_debug(f"Objects count: {len(objects)}")
 
                     # Ограничиваем длину адреса для вывода (с проверкой на None)
                     if parcel and parcel.address:
@@ -554,7 +621,13 @@ class NSPDParserGUI:
                         self._log(f"✅ Участок: {address_short}")
                     else:
                         self._log(f"✅ Участок: {cadastral_number} (адрес не указан)")
+                        self._log_debug("Адрес участка отсутствует в данных API")
+
                     self._log(f"✅ Объектов найдено: {len(objects)}")
+
+                    if objects:
+                        for i, obj in enumerate(objects, 1):
+                            self._log_debug(f"  Объект {i}: {obj.object_type or 'тип не указан'} - {obj.cadastral_number or 'номер не указан'}")
 
                     # Формируем ParseResult
                     parse_result = ParseResult(
@@ -566,9 +639,15 @@ class NSPDParserGUI:
 
                     results.append(parse_result)
                     self._log("✅ Данные обработаны")
+                    self._log_debug(f"ParseResult создан, статус: {parse_result.status}")
 
                 except Exception as e:
-                    self._log(f"❌ Ошибка: {e}")
+                    self._log(f"❌ Ошибка: {e}", level="ERROR")
+                    self._log_debug(f"Тип ошибки: {type(e).__name__}")
+                    self._log_debug(f"Traceback: {e}", level="ERROR")
+
+                    import traceback
+                    self.logger.error(f"Полный traceback:\n{traceback.format_exc()}")
                     # Создаем результат с ошибкой
                     error_result = ParseResult(
                         cadastral_number=cadastral_number,
@@ -645,15 +724,52 @@ class NSPDParserGUI:
             self._set_buttons_state(True)
             self._update_progress(100, 100, "")
 
-    def _log(self, message: str):
-        """Добавление сообщения в лог"""
+    def _log(self, message: str, level: str = "INFO"):
+        """
+        Добавление сообщения в лог
+
+        Args:
+            message: Текст сообщения
+            level: Уровень логирования (DEBUG, INFO, WARNING, ERROR)
+        """
+        # Логируем в файл
+        if level == "DEBUG":
+            self.logger.debug(message)
+        elif level == "WARNING":
+            self.logger.warning(message)
+        elif level == "ERROR":
+            self.logger.error(message)
+        else:
+            self.logger.info(message)
+
+        # Показываем в GUI
         def update():
             self.log_text.config(state=tk.NORMAL)
-            self.log_text.insert(tk.END, message + "\n")
+
+            # Добавляем префикс уровня для dev режима
+            if self.dev_mode.get() and level != "INFO":
+                display_message = f"[{level}] {message}"
+            else:
+                display_message = message
+
+            self.log_text.insert(tk.END, display_message + "\n")
             self.log_text.see(tk.END)
             self.log_text.config(state=tk.DISABLED)
 
         self.root.after(0, update)
+
+    def _log_debug(self, message: str):
+        """Отладочное сообщение (показывается только в dev режиме)"""
+        self.logger.debug(message)
+
+        if self.dev_mode.get():
+            def update():
+                self.log_text.config(state=tk.NORMAL)
+                self.log_text.insert(tk.END, f"[DEBUG] {message}\n")
+                self.log_text.see(tk.END)
+                self.log_text.config(state=tk.DISABLED)
+
+            self.root.after(0, update)
 
     def _clear_log(self):
         """Очистка лога"""
@@ -689,6 +805,67 @@ class NSPDParserGUI:
             self.btn_clear.config(state=state)
 
         self.root.after(0, update)
+
+    def _on_dev_mode_toggle(self):
+        """Переключение режима разработчика"""
+        if self.dev_mode.get():
+            self._log("🔧 Режим разработчика ВКЛЮЧЕН", level="INFO")
+            self._log_debug("Debug логи будут отображаться в интерфейсе")
+            self._log_debug(f"Файл логов: {self.log_file}")
+            self.logger.info("Dev режим включён пользователем")
+        else:
+            self._log("🔧 Режим разработчика ВЫКЛЮЧЕН", level="INFO")
+            self.logger.info("Dev режим выключен пользователем")
+
+    def _on_export_log_click(self):
+        """Экспорт логов в отдельный файл"""
+        if not self.log_file or not os.path.exists(self.log_file):
+            messagebox.showwarning(
+                "Внимание",
+                "Файл логов не найден!"
+            )
+            return
+
+        # Выбор места сохранения
+        export_file = filedialog.asksaveasfilename(
+            title="Сохранить логи как",
+            defaultextension=".log",
+            initialfile=f"nspd_parser_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+            filetypes=[("Файлы логов", "*.log"), ("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")]
+        )
+
+        if not export_file:
+            return  # Пользователь отменил
+
+        try:
+            # Копируем файл логов
+            import shutil
+            shutil.copy2(self.log_file, export_file)
+
+            self._log(f"📄 Логи экспортированы: {os.path.basename(export_file)}", level="INFO")
+            self.logger.info(f"Логи экспортированы в {export_file}")
+
+            # Предлагаем открыть
+            if messagebox.askyesno(
+                "Успех",
+                f"Логи сохранены:\n{export_file}\n\nОткрыть файл?"
+            ):
+                # Открываем файл в программе по умолчанию
+                import platform
+                if platform.system() == 'Darwin':  # macOS
+                    os.system(f'open "{export_file}"')
+                elif platform.system() == 'Windows':
+                    os.startfile(export_file)
+                else:  # Linux
+                    os.system(f'xdg-open "{export_file}"')
+
+        except Exception as e:
+            self._log(f"❌ Ошибка экспорта логов: {e}", level="ERROR")
+            self.logger.error(f"Ошибка экспорта логов: {e}")
+            messagebox.showerror(
+                "Ошибка",
+                f"Не удалось экспортировать логи:\n\n{str(e)}"
+            )
 
 
 def main():
