@@ -31,6 +31,15 @@ class NSPDAPIClient:
             self.session.verify = False
             logger.debug("Windows: SSL проверка отключена")
 
+            # КРИТИЧНО: Отключаем прокси на Windows
+            # Часто Windows пытается использовать несуществующий прокси (127.0.0.1:2080)
+            self.session.trust_env = False  # Игнорировать системные настройки прокси
+            self.session.proxies = {
+                'http': None,
+                'https': None,
+            }
+            logger.debug("Windows: Прокси отключены (trust_env=False)")
+
             # Также настраиваем адаптер для лучшей работы с SSL
             from requests.adapters import HTTPAdapter
             from urllib3.util.retry import Retry
