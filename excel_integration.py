@@ -185,7 +185,11 @@ def process_from_excel(sheet: Optional[xw.Sheet] = None):
                     parcel = result['parcel_data']
                     objects = result['objects_data']
 
-                    print(f"✅ Участок: {parcel.address[:60]}...")
+                    # Безопасный вывод адреса (с проверкой на None)
+                    if parcel and parcel.address:
+                        print(f"✅ Участок: {parcel.address[:60]}...")
+                    else:
+                        print(f"✅ Участок: {cadastral_number} (адрес не указан)")
                     print(f"✅ Объектов найдено: {len(objects)}")
 
                     # Формируем ParseResult
@@ -296,8 +300,10 @@ def process_single_from_excel(cadastral_number: str, sheet: Optional[xw.Sheet] =
             sheet.autofit(axis='columns')
 
             xw.apps.active.status_bar = "✅ Готово!"
+            # Безопасный вывод адреса (с проверкой на None)
+            address_info = parse_result.parcel.address if (parse_result.parcel and parse_result.parcel.address) else "Адрес не указан"
             xw.apps.active.alert(
-                f"Участок: {parse_result.parcel.address}\n\nОбъектов: {len(parse_result.objects)}",
+                f"Участок: {address_info}\n\nОбъектов: {len(parse_result.objects)}",
                 title="Успешно"
             )
 

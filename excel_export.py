@@ -201,7 +201,9 @@ def test_excel_export():
         )
 
         print(f"✅ Загружено:")
-        print(f"   Участок: {parse_result.parcel.cadastral_number}")
+        # Безопасный вывод с проверкой на None
+        cadastral_num = parse_result.parcel.cadastral_number if parse_result.parcel else "не указан"
+        print(f"   Участок: {cadastral_num}")
         print(f"   Объектов: {len(parse_result.objects)}")
 
         # Создаем Excel

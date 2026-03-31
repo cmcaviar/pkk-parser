@@ -35,11 +35,14 @@ def main():
             status="Успешно"
         )
 
-        # Выводим информацию
+        # Выводим информацию (с проверкой на None)
         print(f"\n✅ Участок загружен:")
-        print(f"   Адрес: {parse_result.parcel.address}")
-        print(f"   Площадь: {parse_result.parcel.area}")
-        print(f"   Стоимость: {parse_result.parcel.cadastral_value}")
+        if parse_result.parcel:
+            print(f"   Адрес: {parse_result.parcel.address or 'не указан'}")
+            print(f"   Площадь: {parse_result.parcel.area or 'не указана'}")
+            print(f"   Стоимость: {parse_result.parcel.cadastral_value or 'не указана'}")
+        else:
+            print(f"   Данные участка отсутствуют")
         print(f"\n✅ Объектов на участке: {len(parse_result.objects)}")
 
         # Создаем Excel

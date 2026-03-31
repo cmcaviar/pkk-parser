@@ -32,17 +32,17 @@ def test_search_parcel(client: NSPDAPIClient, cadastral_number: str):
     # Парсим данные
     parcel = client.parse_parcel_data(feature, cadastral_number)
 
-    # Выводим ВСЕ данные участка (колонки B-H для Excel)
+    # Выводим ВСЕ данные участка (колонки B-H для Excel) с проверкой на None
     print(f"\n📋 ДАННЫЕ УЧАСТКА (колонки B-H в Excel):")
     print(f"   ┌─ A: Кадастровый номер: {cadastral_number}")
     print(f"   │")
-    print(f"   ├─ B: Вид объекта недвижимости: {parcel.object_type}")
-    print(f"   ├─ C: Вид земельного участка: {parcel.parcel_type}")
-    print(f"   ├─ D: Адрес: {parcel.address}")
-    print(f"   ├─ E: Площадь декларированная: {parcel.area}")
-    print(f"   ├─ F: Вид разрешенного использования: {parcel.permitted_use}")
-    print(f"   ├─ G: Форма собственности: {parcel.ownership_form}")
-    print(f"   └─ H: Кадастровая стоимость: {parcel.cadastral_value}")
+    print(f"   ├─ B: Вид объекта недвижимости: {parcel.object_type or '-'}")
+    print(f"   ├─ C: Вид земельного участка: {parcel.parcel_type or '-'}")
+    print(f"   ├─ D: Адрес: {parcel.address or '-'}")
+    print(f"   ├─ E: Площадь декларированная: {parcel.area or '-'}")
+    print(f"   ├─ F: Вид разрешенного использования: {parcel.permitted_use or '-'}")
+    print(f"   ├─ G: Форма собственности: {parcel.ownership_form or '-'}")
+    print(f"   └─ H: Кадастровая стоимость: {parcel.cadastral_value or '-'}")
 
     return feature, parcel
 

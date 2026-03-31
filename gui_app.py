@@ -96,6 +96,11 @@ class NSPDParserGUI:
         self.text_input.bind("<Control-v>", self._on_paste)  # Windows/Linux (дополнительно)
         self.text_input.bind("<Command-v>", self._on_paste)  # macOS (дополнительно)
 
+        # Контекстное меню (правая кнопка мыши)
+        self._create_context_menu()
+        self.text_input.bind("<Button-3>", self._show_context_menu)  # Windows/Linux - правая кнопка
+        self.text_input.bind("<Button-2>", self._show_context_menu)  # macOS - правая кнопка
+
         # Кнопки управления
         buttons_frame = ttk.Frame(self.root, padding="10")
         buttons_frame.pack(fill=tk.X)
@@ -185,6 +190,80 @@ class NSPDParserGUI:
             self.is_placeholder_active = False
         # Tkinter сам обработает вставку после нашего обработчика
         return None  # Продолжить стандартную обработку
+
+    def _create_context_menu(self):
+        """Создание контекстного меню для текстового поля"""
+        self.context_menu = tk.Menu(self.text_input, tearoff=0)
+
+        self.context_menu.add_command(
+            label="Вырезать",
+            command=self._context_cut,
+            accelerator="Ctrl+X"
+        )
+        self.context_menu.add_command(
+            label="Копировать",
+            command=self._context_copy,
+            accelerator="Ctrl+C"
+        )
+        self.context_menu.add_command(
+            label="Вставить",
+            command=self._context_paste,
+            accelerator="Ctrl+V"
+        )
+        self.context_menu.add_separator()
+        self.context_menu.add_command(
+            label="Выделить всё",
+            command=self._context_select_all,
+            accelerator="Ctrl+A"
+        )
+        self.context_menu.add_separator()
+        self.context_menu.add_command(
+            label="Очистить",
+            command=self._on_clear_click
+        )
+
+    def _show_context_menu(self, event):
+        """Показать контекстное меню"""
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def _context_cut(self):
+        """Вырезать текст (из контекстного меню)"""
+        if not self.is_placeholder_active:
+            try:
+                self.text_input.event_generate("<<Cut>>")
+            except tk.TclError:
+                pass
+
+    def _context_copy(self):
+        """Копировать текст (из контекстного меню)"""
+        if not self.is_placeholder_active:
+            try:
+                self.text_input.event_generate("<<Copy>>")
+            except tk.TclError:
+                pass
+
+    def _context_paste(self):
+        """Вставить текст (из контекстного меню)"""
+        # Удаляем placeholder если активен
+        if self.is_placeholder_active:
+            self.text_input.delete("1.0", tk.END)
+            self.text_input.config(fg="black")
+            self.is_placeholder_active = False
+
+        try:
+            self.text_input.event_generate("<<Paste>>")
+        except tk.TclError:
+            pass
+
+    def _context_select_all(self):
+        """Выделить весь текст (из контекстного меню)"""
+        if not self.is_placeholder_active:
+            self.text_input.tag_add(tk.SEL, "1.0", tk.END)
+            self.text_input.mark_set(tk.INSERT, "1.0")
+            self.text_input.see(tk.INSERT)
 
     def _on_import_csv_click(self):
         """Обработка импорта CSV файла"""
@@ -469,9 +548,12 @@ class NSPDParserGUI:
                     parcel = result['parcel_data']
                     objects = result['objects_data']
 
-                    # Ограничиваем длину адреса для вывода
-                    address_short = parcel.address[:60] + "..." if len(parcel.address) > 60 else parcel.address
-                    self._log(f"✅ Участок: {address_short}")
+                    # Ограничиваем длину адреса для вывода (с проверкой на None)
+                    if parcel and parcel.address:
+                        address_short = parcel.address[:60] + "..." if len(parcel.address) > 60 else parcel.address
+                        self._log(f"✅ Участок: {address_short}")
+                    else:
+                        self._log(f"✅ Участок: {cadastral_number} (адрес не указан)")
                     self._log(f"✅ Объектов найдено: {len(objects)}")
 
                     # Формируем ParseResult

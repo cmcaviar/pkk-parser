@@ -49,7 +49,11 @@ def main():
                 )
 
                 print(f"✅ Загружено:")
-                print(f"   Адрес: {parse_result.parcel.address[:80]}...")
+                # Безопасный вывод адреса (с проверкой на None)
+                if parse_result.parcel and parse_result.parcel.address:
+                    print(f"   Адрес: {parse_result.parcel.address[:80]}...")
+                else:
+                    print(f"   Адрес: не указан")
                 print(f"   Объектов: {len(parse_result.objects)}")
 
                 results.append(parse_result)
