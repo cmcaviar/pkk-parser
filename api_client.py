@@ -527,8 +527,9 @@ class NSPDAPIClient:
             Объект RealtyObject
         """
         # РЕАЛЬНАЯ СТРУКТУРА НСПД для объектов:
-        # Здания: build_record_type_value, build_record_area, purpose, floors, materials, year_built
+        # Здания: build_record_type_value, build_record_area, purpose, floors, materials, year_built, building_name
         # Сооружения: object_type_value, params_name, params_purpose, params_year_commisioning
+        #             params_built_up_area/built_up_area (площадь застройки), params_area (площадь), params_extent (протяжённость)
         # Помещения: realty_estate_type, object_record_area, object_record_purpose
 
         props = data.get('properties', {})
@@ -541,34 +542,59 @@ class NSPDAPIClient:
                    opts.get('land_record_type') or
                    'Нет данных')
 
+        # Наименование (для зданий и сооружений)
+        name = (opts.get('building_name') or  # Название здания
+                opts.get('params_name') or  # Название сооружения ("Водопровод", "Трубопровод" и т.д.)
+                opts.get('object_name') or
+                None)
+
         # Назначение (для зданий/помещений/сооружений)
         purpose = (opts.get('purpose') or  # "Нежилое" (для зданий)
                   opts.get('params_purpose') or  # "Нежилое здание" (для сооружений)
                   opts.get('object_record_purpose') or  # для помещений
                   opts.get('permitted_use_name') or
-                  opts.get('params_name') or  # "Водопровод" (название сооружения)
                   'Нет данных')
 
         # Площадь (для зданий - build_record_area, для помещений - object_record_area)
+        # Для сооружений - params_area (если есть)
         area_value = (opts.get('build_record_area') or  # Площадь здания
                      opts.get('object_record_area') or  # Площадь помещения
+                     opts.get('params_area') or  # Площадь сооружения (если есть)
                      opts.get('specified_area') or
                      opts.get('land_record_area'))
+
+        # Площадь застройки (специфично для сооружений)
+        building_area_value = (opts.get('params_built_up_area') or  # Площадь застройки сооружения
+                              opts.get('built_up_area'))  # Альтернативное поле
+
+        # Протяжённость (специфично для сооружений - трубопроводы, дороги и т.д.)
+        length_value = opts.get('params_extent')  # Протяжённость
 
         # Год ввода в эксплуатацию (разные поля для разных типов)
         commissioning_year = (opts.get('year_commisioning') or  # для зданий/помещений
                              opts.get('params_year_commisioning') or  # для сооружений
                              'Нет данных')
 
+        logger.debug(f"Объект {cadastral_number}: тип={obj_type}, name={name}, area={area_value}, building_area={building_area_value}, length={length_value}")
+
         return RealtyObject(
             cadastral_number=opts.get('cad_num') or opts.get('cad_number', cadastral_number),
             object_type=obj_type,
+
+            # Наименование (НОВОЕ)
+            name=name,
 
             # Назначение
             purpose=purpose,
 
             # Площадь
             area=self._format_area(area_value),
+
+            # Площадь застройки (НОВОЕ для сооружений)
+            building_area=self._format_area(building_area_value) if building_area_value else None,
+
+            # Протяжённость (НОВОЕ для сооружений)
+            length=self._format_length(length_value) if length_value else None,
 
             # Форма собственности
             ownership_form=opts.get('ownership_type') or 'Нет данных',
@@ -580,9 +606,10 @@ class NSPDAPIClient:
             ),
 
             # Удельный показатель (стоимость за кв.м)
+            # Используем приоритетно area_value, затем building_area_value
             unit_value=self._format_unit_value(
                 opts.get('cost_value'),
-                area_value
+                area_value or building_area_value
             ),
 
             # Этажность (для зданий)
@@ -599,6 +626,15 @@ class NSPDAPIClient:
             # Культурное наследие
             cultural_heritage=opts.get('cultural_heritage_val') or 'Нет данных'
         )
+
+    def _format_length(self, value) -> str:
+        """Форматирование протяжённости"""
+        if not value:
+            return 'Нет данных'
+        try:
+            return f"{float(value):,.2f} м".replace(',', ' ')
+        except (ValueError, TypeError):
+            return str(value) if value else 'Нет данных'
 
     def _format_unit_value(self, cost_value, area_value) -> str:
         """Форматирование удельной стоимости (руб/м²)"""

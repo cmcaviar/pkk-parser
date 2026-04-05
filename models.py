@@ -36,8 +36,11 @@ class RealtyObject:
     """Объект недвижимости на участке"""
     object_type: Optional[str] = None  # Вид объекта
     cadastral_number: Optional[str] = None  # Кадастровый номер объекта
+    name: Optional[str] = None  # Наименование (для сооружений и зданий)
     purpose: Optional[str] = None  # Назначение
-    area: Optional[str] = None  # Площадь
+    area: Optional[str] = None  # Площадь (общая или застройки)
+    building_area: Optional[str] = None  # Площадь застройки (для сооружений)
+    length: Optional[str] = None  # Протяжённость (для сооружений)
     ownership_form: Optional[str] = None  # Форма собственности
     cadastral_value: Optional[str] = None  # Кадастровая стоимость
     unit_value: Optional[str] = None  # Удельный показатель
@@ -53,8 +56,11 @@ class RealtyObject:
         return {
             "Вид объекта недвижимости_obj": self.object_type or "-",
             "Кадастровый номер_obj": self.cadastral_number or "-",
+            "Наименование": self.name or "-",  # НОВОЕ ПОЛЕ
             "Назначение": self.purpose or "-",
             "Площадь общая": self.area or "-",
+            "Площадь застройки": self.building_area or "-",  # НОВОЕ ПОЛЕ для сооружений
+            "Протяжённость": self.length or "-",  # НОВОЕ ПОЛЕ для сооружений
             "Форма собственности_obj": self.ownership_form or "-",
             "Кадастровая стоимость_obj": self.cadastral_value or "-",
             "Удельный показатель кадастровой стоимости": self.unit_value or "-",
@@ -102,12 +108,15 @@ class ParseResult:
             "Кадастровая стоимость": "-",
         }
 
-        # Пустые данные объекта (колонки I-U)
+        # Пустые данные объекта (колонки I-U + новые поля)
         empty_object = {
             "Вид объекта недвижимости_obj": "-",
             "Кадастровый номер_obj": "-",
+            "Наименование": "-",
             "Назначение": "-",
             "Площадь общая": "-",
+            "Площадь застройки": "-",
+            "Протяжённость": "-",
             "Форма собственности_obj": "-",
             "Кадастровая стоимость_obj": "-",
             "Удельный показатель кадастровой стоимости": "-",
