@@ -529,7 +529,7 @@ class NSPDAPIClient:
         # РЕАЛЬНАЯ СТРУКТУРА НСПД для объектов:
         # Здания: build_record_type_value, build_record_area, purpose, floors, materials, year_built, building_name
         # Сооружения: object_type_value, params_name, params_purpose, params_year_commisioning
-        #             params_built_up_area/built_up_area (площадь застройки), params_area (площадь), params_extent (протяжённость)
+        #             params_built_up_area/built_up_area (площадь застройки), params_area (площадь), params_extension/extension (протяжённость)
         # Помещения: realty_estate_type, object_record_area, object_record_purpose
 
         props = data.get('properties', {})
@@ -568,7 +568,8 @@ class NSPDAPIClient:
                               opts.get('built_up_area'))  # Альтернативное поле
 
         # Протяжённость (специфично для сооружений - трубопроводы, дороги и т.д.)
-        length_value = opts.get('params_extent')  # Протяжённость
+        length_value = (opts.get('params_extension') or  # Протяжённость сооружения
+                       opts.get('extension'))  # Альтернативное поле
 
         # Год ввода в эксплуатацию (разные поля для разных типов)
         commissioning_year = (opts.get('year_commisioning') or  # для зданий/помещений
@@ -591,10 +592,10 @@ class NSPDAPIClient:
             area=self._format_area(area_value),
 
             # Площадь застройки (НОВОЕ для сооружений)
-            building_area=self._format_area(building_area_value) if building_area_value else None,
+            building_area=self._format_area(building_area_value) if building_area_value is not None else None,
 
             # Протяжённость (НОВОЕ для сооружений)
-            length=self._format_length(length_value) if length_value else None,
+            length=self._format_length(length_value) if length_value is not None else None,
 
             # Форма собственности
             ownership_form=opts.get('ownership_type') or 'Нет данных',

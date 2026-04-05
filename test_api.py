@@ -210,7 +210,7 @@ def run_full_test(cadastral_number: str, objects_limit: int = 5):
 def main():
     """Главная функция"""
     # Параметры по умолчанию
-    default_cadastral_number = "77:05:0001016:22"
+    default_cadastral_number = "77:07:0006004:165"
     default_objects_limit = 5
 
     # Получаем параметры из командной строки
