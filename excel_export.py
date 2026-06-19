@@ -5,7 +5,7 @@ from typing import List
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
-from models import ParseResult
+from models import ParseResult, BuildingParseResult
 
 
 def create_excel_with_template(results: List[ParseResult], output_file: str):
@@ -178,6 +178,96 @@ def create_excel_with_template(results: List[ParseResult], output_file: str):
     wb.save(output_file)
     print(f"✅ Excel файл сохранен: {output_file}")
     print(f"   Строк данных: {current_row - 3}")
+
+
+def create_building_premises_excel(results: List[BuildingParseResult], output_file: str):
+    """
+    Создание Excel файла для зданий с помещениями
+
+    Args:
+        results: Список BuildingParseResult
+        output_file: Путь к выходному файлу
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Здания и помещения"
+
+    columns = [
+        "Кадастровый номер здания",         # A
+        "Площадь здания",                    # B
+        "Актуальность здания",               # C
+        "Кадастровый номер помещения",       # D
+        "Координаты границ",                  # E
+        "Снят с учёта (доп.статус)",         # F
+        "Вид объекта",                        # G
+        "Дата присвоения",                    # H
+        "Вид жилого помещения",              # I
+        "Назначение помещения",               # J
+        "Номер/тип этажа",                    # K
+        "Площадь, кв.м",                     # L
+        "Адрес",                              # M
+        "Статус (кадастровый)",              # N
+        "Форма собственности",               # O
+        "Общее имущество в МКД",             # P
+        "Общее имущество (прочее)",          # Q
+        "Кадастровая стоимость, руб.",       # R
+        "Удельный показатель, руб./кв.м",   # S
+        "Кадастровый номер здания_2",        # T  (дублируется как в примере)
+        "Включение в реестр объектов культурного наследия",  # U
+        "Дата снятия с учёта",               # V
+    ]
+
+    # Заголовки для отображения (убираем суффикс _2)
+    headers_display = {col: col.replace("_2", "") for col in columns}
+
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    # Строка 1: заголовки
+    ws.row_dimensions[1].height = 45
+
+    fill_building = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+    fill_premise = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+
+    for col_idx, col_name in enumerate(columns, 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.value = headers_display[col_name]
+        cell.font = Font(bold=True, size=10)
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = thin_border
+        cell.fill = fill_building if col_idx <= 3 else fill_premise
+
+    # Строки с данными
+    current_row = 2
+    for result in results:
+        rows = result.to_excel_rows()
+        for row_data in rows:
+            for col_idx, col_name in enumerate(columns, 1):
+                cell = ws.cell(row=current_row, column=col_idx)
+                cell.value = row_data.get(col_name, "—")
+                cell.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+                cell.border = thin_border
+            current_row += 1
+
+    # Ширина колонок
+    column_widths = {
+        'A': 22, 'B': 16, 'C': 14, 'D': 22, 'E': 20, 'F': 38,
+        'G': 12, 'H': 14, 'I': 20, 'J': 14, 'K': 25, 'L': 12,
+        'M': 45, 'N': 16, 'O': 20, 'P': 20, 'Q': 20, 'R': 20,
+        'S': 24, 'T': 22, 'U': 40, 'V': 16,
+    }
+    for col_letter, width in column_widths.items():
+        ws.column_dimensions[col_letter].width = width
+
+    ws.freeze_panes = 'A2'
+
+    wb.save(output_file)
+    print(f"✅ Excel файл сохранен: {output_file}")
+    print(f"   Строк данных: {current_row - 2}")
 
 
 def test_excel_export():

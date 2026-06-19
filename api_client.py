@@ -8,10 +8,11 @@ import logging
 import platform
 import os
 from typing import Optional, Dict, Any, List
+from datetime import datetime
 from urllib3.exceptions import InsecureRequestWarning
 
 from config import config
-from models import Parcel, RealtyObject
+from models import Parcel, RealtyObject, Premise, BuildingParseResult
 
 # Отключаем предупреждения о небезопасных SSL соединениях
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -728,6 +729,225 @@ class NSPDAPIClient:
 
         result['objects_data'] = objects_data
         logger.info(f"Участок {cadastral_number}: загружено данных {len(objects_data)}/{len(result['objects_cadastral_numbers'])} объектов")
+
+        return result
+
+    def is_building_feature(self, feature: Dict[str, Any]) -> bool:
+        """Проверка, является ли feature зданием"""
+        opts = feature.get('properties', {}).get('options', {})
+        return bool(opts.get('build_record_type_value'))
+
+    def get_premises_list_in_building(self, feature_id: int, category_id: int) -> List[str]:
+        """
+        Получение списка кадастровых номеров помещений в здании
+
+        Args:
+            feature_id: ID feature здания
+            category_id: ID категории здания
+
+        Returns:
+            Список кадастровых номеров помещений
+        """
+        logger.info(f"Получение помещений здания feature_id={feature_id}")
+
+        url = f"{config.api.base_url}/api/geoportal/v1/tab-group-data"
+        params = {
+            'tabClass': 'objectsList',
+            'categoryId': category_id,
+            'geomId': feature_id,
+        }
+
+        response = self._make_request('GET', url, params=params)
+        if not response:
+            return []
+
+        try:
+            data = response.json()
+            # Структура: {"object": [{"title": "Помещения (список)", "value": ["cn1", ...]}, ...]}
+            for obj in data.get('object', []):
+                if isinstance(obj, dict) and obj.get('title') == 'Помещения (список)':
+                    values = [v for v in obj.get('value', []) if v]
+                    logger.info(f"Найдено помещений: {len(values)}")
+                    return values
+            logger.warning("Список помещений не найден в ответе API")
+            return []
+        except ValueError as e:
+            logger.error(f"Ошибка парсинга JSON: {e}")
+            return []
+
+    def parse_premise_data(self, data: Dict[str, Any], building_cn: str) -> Premise:
+        """
+        Парсинг данных помещения из API ответа
+
+        Args:
+            data: feature из GeoJSON
+            building_cn: Кадастровый номер здания (родителя)
+
+        Returns:
+            Объект Premise
+        """
+        opts = data.get('properties', {}).get('options', {})
+        geometry = data.get('geometry')
+
+        # Определяем, есть ли координаты (не точка, а полигон)
+        has_coords = geometry is not None and geometry.get('type') not in (None, 'Point')
+
+        # Дата в формате ДД.ММ.ГГГГ
+        def fmt_date(iso_str):
+            if not iso_str:
+                return None
+            try:
+                dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+                return dt.strftime('%d.%m.%Y')
+            except Exception:
+                return str(iso_str)
+
+        # Этажи: список → строка через " ;"
+        floor_raw = opts.get('floor')
+        if isinstance(floor_raw, list):
+            floor_str = " ;".join(str(f) for f in floor_raw) if floor_raw else None
+        elif floor_raw:
+            floor_str = str(floor_raw)
+        else:
+            floor_str = None
+
+        # Общее имущество МКД: строка "false"/"true" → "нет"/"да"
+        def fmt_bool_prop(val):
+            if val is None:
+                return None
+            s = str(val).lower()
+            if s == 'true':
+                return "да"
+            if s == 'false':
+                return "нет"
+            return str(val)
+
+        # Снят с учёта
+        removed_gcu_raw = opts.get('removed_GCU')
+        if isinstance(removed_gcu_raw, bool):
+            removed = removed_gcu_raw
+        else:
+            removed = str(removed_gcu_raw).lower() == 'true' if removed_gcu_raw is not None else False
+
+        # Кадастровый номер здания: из API или переданный
+        parent_cn = opts.get('parent_cad_number') or building_cn
+
+        # Площадь: может быть None, float или строка
+        area_raw = opts.get('area')
+        try:
+            area_val = float(area_raw) if area_raw is not None else None
+        except (ValueError, TypeError):
+            area_val = None
+
+        cost_raw = opts.get('cost_value')
+        try:
+            cost_val = float(cost_raw) if cost_raw is not None else None
+        except (ValueError, TypeError):
+            cost_val = None
+
+        index_raw = opts.get('cost_index')
+        try:
+            index_val = float(index_raw) if index_raw is not None else None
+        except (ValueError, TypeError):
+            index_val = None
+
+        return Premise(
+            cad_number=opts.get('cad_number') or opts.get('cad_num', ''),
+            building_cad_number=parent_cn,
+            has_coordinates=has_coords,
+            removed_gcu=removed,
+            obj_type=opts.get('type', 'Помещение'),
+            registration_date=fmt_date(opts.get('registration_date')),
+            living_type=opts.get('params_type'),
+            purpose=opts.get('purpose'),
+            floor=floor_str,
+            area=area_val,
+            address=opts.get('readable_address'),
+            cadastral_status=opts.get('common_data_status'),
+            ownership_form=opts.get('ownership_type'),
+            common_property_mkd=fmt_bool_prop(opts.get('common_property')),
+            common_property_other=fmt_bool_prop(opts.get('service_common_property')),
+            cadastral_value=cost_val,
+            unit_value=index_val,
+            cultural_heritage=opts.get('cultural_heritage_val'),
+            cancel_date=fmt_date(opts.get('cancel_date')),
+        )
+
+    def get_full_building_with_premises(self, cadastral_number: str) -> BuildingParseResult:
+        """
+        Получение полной информации о здании со всеми помещениями
+
+        Args:
+            cadastral_number: Кадастровый номер здания
+
+        Returns:
+            BuildingParseResult с данными здания и списком помещений
+        """
+        logger.info(f"Получение здания с помещениями: {cadastral_number}")
+
+        result = BuildingParseResult(building_cad_number=cadastral_number)
+
+        # Поиск здания
+        building_feature = self.search_cadastral_number(cadastral_number)
+        if not building_feature:
+            result.status = "Ошибка: здание не найдено"
+            return result
+
+        opts = building_feature.get('properties', {}).get('options', {})
+
+        # Площадь здания
+        area_raw = opts.get('build_record_area')
+        if area_raw is not None:
+            try:
+                area_float = float(area_raw)
+                # Форматируем как "5 537 кв. м" или "32 412,8 кв. м"
+                if area_float == int(area_float):
+                    num = f"{int(area_float):,}".replace(',', ' ')
+                else:
+                    num = f"{area_float:,.1f}".replace(',', ' ').replace('.', ',')
+                result.building_area = f"{num} кв. м"
+            except (ValueError, TypeError):
+                result.building_area = str(area_raw)
+        else:
+            result.building_area = "—"
+
+        result.building_relevance = "—"
+
+        # Получаем список помещений
+        feature_id = building_feature.get('id')
+        category_id = building_feature.get('properties', {}).get('category')
+
+        if not feature_id:
+            result.status = "Ошибка: не удалось получить ID здания"
+            return result
+
+        premises_cns = self.get_premises_list_in_building(feature_id, category_id)
+
+        if not premises_cns:
+            logger.warning(f"Здание {cadastral_number}: помещения не найдены")
+            result.status = "Успешно (помещения не найдены)"
+            return result
+
+        logger.info(f"Здание {cadastral_number}: найдено {len(premises_cns)} помещений, загружаю данные...")
+
+        premises = []
+        for prem_cn in premises_cns:
+            prem_feature = self.search_cadastral_number(prem_cn)
+            if prem_feature:
+                premise = self.parse_premise_data(prem_feature, cadastral_number)
+                premises.append(premise)
+            else:
+                logger.warning(f"  Помещение {prem_cn} не найдено")
+                # Добавляем заглушку чтобы не потерять кадастровый номер
+                premises.append(Premise(
+                    cad_number=prem_cn,
+                    building_cad_number=cadastral_number,
+                    cadastral_status="Не найдено в API",
+                ))
+
+        result.premises = premises
+        result.status = "Успешно"
+        logger.info(f"Здание {cadastral_number}: загружено {len(premises)} помещений")
 
         return result
 

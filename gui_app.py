@@ -14,8 +14,8 @@ import csv
 import logging
 
 from api_client import NSPDAPIClient
-from models import ParseResult
-from excel_export import create_excel_with_template
+from models import ParseResult, BuildingParseResult
+from excel_export import create_excel_with_template, create_building_premises_excel
 
 
 class NSPDParserGUI:
@@ -588,6 +588,12 @@ class NSPDParserGUI:
             self._log("ОБРАБОТКА НОМЕРОВ")
             self._log("=" * 80)
 
+            # Результаты: раздельно для участков и зданий
+            parcel_results = []
+            building_results = []
+
+            import time
+
             # Обрабатываем каждый номер
             for idx, cadastral_number in enumerate(cadastral_numbers, 1):
                 self._update_progress(idx, total, cadastral_number)
@@ -598,64 +604,91 @@ class NSPDParserGUI:
                 self._log_debug(f"Начало обработки номера {cadastral_number}")
 
                 try:
-                    # Получаем данные
-                    self._log("⏳ Загрузка данных участка...")
-                    self._log_debug(f"Вызов get_full_parcel_info_with_objects({cadastral_number})")
+                    # Сначала определяем тип объекта
+                    self._log("⏳ Определение типа объекта...")
+                    feature = self.api_client.search_cadastral_number(cadastral_number)
 
-                    import time
+                    if not feature:
+                        self._log(f"⚠️ Объект не найден: {cadastral_number}")
+                        # Добавляем пустой результат в зависимости от контекста
+                        error_result = ParseResult(
+                            cadastral_number=cadastral_number,
+                            parcel=None,
+                            objects=[],
+                            status="Ошибка: объект не найден"
+                        )
+                        parcel_results.append(error_result)
+                        continue
+
+                    is_building = self.api_client.is_building_feature(feature)
+                    self._log_debug(f"Тип объекта: {'Здание' if is_building else 'Участок/другое'}")
+
                     start_time = time.time()
-                    result = self.api_client.get_full_parcel_info_with_objects(cadastral_number)
-                    elapsed = time.time() - start_time
 
-                    self._log_debug(f"API запрос выполнен за {elapsed:.2f} сек")
+                    if is_building:
+                        # --- ЗДАНИЕ: получаем помещения ---
+                        self._log("🏢 Обнаружено здание — загружаю помещения...")
 
-                    parcel = result['parcel_data']
-                    objects = result['objects_data']
+                        building_result = self.api_client.get_full_building_with_premises(cadastral_number)
+                        elapsed = time.time() - start_time
 
-                    self._log_debug(f"Parcel type: {type(parcel).__name__ if parcel else 'None'}")
-                    self._log_debug(f"Objects count: {len(objects)}")
+                        self._log_debug(f"API запрос выполнен за {elapsed:.2f} сек")
+                        self._log(f"✅ Помещений найдено: {len(building_result.premises)}")
+                        self._log(f"✅ Площадь здания: {building_result.building_area}")
 
-                    # Ограничиваем длину адреса для вывода (с проверкой на None)
-                    if parcel and parcel.address:
-                        address_short = parcel.address[:60] + "..." if len(parcel.address) > 60 else parcel.address
-                        self._log(f"✅ Участок: {address_short}")
+                        building_results.append(building_result)
+                        self._log("✅ Данные обработаны")
+
                     else:
-                        self._log(f"✅ Участок: {cadastral_number} (адрес не указан)")
-                        self._log_debug("Адрес участка отсутствует в данных API")
+                        # --- УЧАСТОК / ДРУГОЙ ОБЪЕКТ: существующая логика ---
+                        self._log("⏳ Загрузка данных участка...")
+                        self._log_debug(f"Вызов get_full_parcel_info_with_objects({cadastral_number})")
 
-                    self._log(f"✅ Объектов найдено: {len(objects)}")
+                        result = self.api_client.get_full_parcel_info_with_objects(cadastral_number)
+                        elapsed = time.time() - start_time
 
-                    if objects:
-                        for i, obj in enumerate(objects, 1):
-                            self._log_debug(f"  Объект {i}: {obj.object_type or 'тип не указан'} - {obj.cadastral_number or 'номер не указан'}")
+                        self._log_debug(f"API запрос выполнен за {elapsed:.2f} сек")
 
-                    # Формируем ParseResult
-                    parse_result = ParseResult(
-                        cadastral_number=cadastral_number,
-                        parcel=parcel,
-                        objects=objects,
-                        status="Успешно"
-                    )
+                        parcel = result['parcel_data']
+                        objects = result['objects_data']
 
-                    results.append(parse_result)
-                    self._log("✅ Данные обработаны")
-                    self._log_debug(f"ParseResult создан, статус: {parse_result.status}")
+                        self._log_debug(f"Parcel type: {type(parcel).__name__ if parcel else 'None'}")
+                        self._log_debug(f"Objects count: {len(objects)}")
+
+                        if parcel and parcel.address:
+                            address_short = parcel.address[:60] + "..." if len(parcel.address) > 60 else parcel.address
+                            self._log(f"✅ Участок: {address_short}")
+                        else:
+                            self._log(f"✅ Участок: {cadastral_number} (адрес не указан)")
+
+                        self._log(f"✅ Объектов найдено: {len(objects)}")
+
+                        if objects:
+                            for i, obj in enumerate(objects, 1):
+                                self._log_debug(f"  Объект {i}: {obj.object_type or 'тип не указан'} - {obj.cadastral_number or 'номер не указан'}")
+
+                        parse_result = ParseResult(
+                            cadastral_number=cadastral_number,
+                            parcel=parcel,
+                            objects=objects,
+                            status="Успешно"
+                        )
+                        parcel_results.append(parse_result)
+                        self._log("✅ Данные обработаны")
 
                 except Exception as e:
                     self._log(f"❌ Ошибка: {e}", level="ERROR")
                     self._log_debug(f"Тип ошибки: {type(e).__name__}")
-                    self._log_debug(f"Traceback: {e}", level="ERROR")
 
                     import traceback
                     self.logger.error(f"Полный traceback:\n{traceback.format_exc()}")
-                    # Создаем результат с ошибкой
                     error_result = ParseResult(
                         cadastral_number=cadastral_number,
                         parcel=None,
                         objects=[],
                         status=f"Ошибка: {str(e)}"
                     )
-                    results.append(error_result)
+                    parcel_results.append(error_result)
 
             # Закрываем клиент
             self._log("\n🔒 Закрытие API клиента...")
@@ -668,12 +701,22 @@ class NSPDParserGUI:
             self._log("=" * 80)
             self._log(f"\n📝 Создание файла: {output_file}...")
 
-            create_excel_with_template(results, output_file)
+            if building_results and parcel_results:
+                # Смешанный ввод: два листа в одном файле
+                self._log("ℹ️ Обнаружены и участки, и здания — создаю два листа в файле")
+                self._create_mixed_excel(parcel_results, building_results, output_file)
+            elif building_results:
+                create_building_premises_excel(building_results, output_file)
+            else:
+                create_excel_with_template(parcel_results, output_file)
+
+            # Для подсчёта успехов объединяем все результаты
+            results = parcel_results + building_results
 
             self._log("✅ Excel файл создан!")
 
             # Финальная статистика
-            success_count = sum(1 for r in results if r.status == "Успешно")
+            success_count = sum(1 for r in results if r.status == "Успешно" or (hasattr(r, 'status') and 'Успешно' in r.status))
             error_count = total - success_count
 
             self._log("\n" + "=" * 80)
@@ -723,6 +766,39 @@ class NSPDParserGUI:
             self.is_processing = False
             self._set_buttons_state(True)
             self._update_progress(100, 100, "")
+
+    def _create_mixed_excel(self, parcel_results, building_results, output_file: str):
+        """Создание Excel с двумя листами: участки и здания/помещения"""
+        import openpyxl
+        from excel_export import create_excel_with_template, create_building_premises_excel
+        import tempfile, os, shutil
+
+        # Создаём участки во временный файл
+        tmp_parcels = output_file + ".parcels.tmp.xlsx"
+        tmp_buildings = output_file + ".buildings.tmp.xlsx"
+
+        try:
+            create_excel_with_template(parcel_results, tmp_parcels)
+            create_building_premises_excel(building_results, tmp_buildings)
+
+            # Объединяем листы в один файл
+            wb_final = openpyxl.load_workbook(tmp_parcels)
+            wb_buildings = openpyxl.load_workbook(tmp_buildings)
+
+            # Копируем лист зданий
+            ws_src = wb_buildings.active
+            ws_dst = wb_final.create_sheet("Здания и помещения")
+            for row in ws_src.iter_rows():
+                for cell in row:
+                    ws_dst.cell(row=cell.row, column=cell.column, value=cell.value)
+
+            wb_final.save(output_file)
+        finally:
+            for f in [tmp_parcels, tmp_buildings]:
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
 
     def _log(self, message: str, level: str = "INFO"):
         """
