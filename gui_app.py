@@ -629,7 +629,12 @@ class NSPDParserGUI:
                         # --- ЗДАНИЕ: получаем помещения ---
                         self._log("🏢 Обнаружено здание — загружаю помещения...")
 
-                        building_result = self.api_client.get_full_building_with_premises(cadastral_number)
+                        def on_premise_progress(idx, total, prem_cn):
+                            self._log(f"  [{idx}/{total}] {prem_cn}")
+
+                        building_result = self.api_client.get_full_building_with_premises(
+                            cadastral_number, progress_callback=on_premise_progress
+                        )
                         elapsed = time.time() - start_time
 
                         self._log_debug(f"API запрос выполнен за {elapsed:.2f} сек")

@@ -737,24 +737,24 @@ class NSPDAPIClient:
         opts = feature.get('properties', {}).get('options', {})
         return bool(opts.get('build_record_type_value'))
 
-    def get_premises_list_in_building(self, feature_id: int, category_id: int) -> List[str]:
+    def get_premises_list_in_building(self, objdoc_id: int, registers_id: int) -> List[str]:
         """
         Получение списка кадастровых номеров помещений в здании
 
         Args:
-            feature_id: ID feature здания
-            category_id: ID категории здания
+            objdoc_id: objdocId из options здания
+            registers_id: registersId из options здания
 
         Returns:
             Список кадастровых номеров помещений
         """
-        logger.info(f"Получение помещений здания feature_id={feature_id}")
+        logger.info(f"Получение помещений здания objdoc_id={objdoc_id}, registers_id={registers_id}")
 
         url = f"{config.api.base_url}/api/geoportal/v1/tab-group-data"
         params = {
             'tabClass': 'objectsList',
-            'categoryId': category_id,
-            'geomId': feature_id,
+            'ObjDocID': objdoc_id,
+            'RegistersID': registers_id,
         }
 
         response = self._make_request('GET', url, params=params)
@@ -873,7 +873,7 @@ class NSPDAPIClient:
             cancel_date=fmt_date(opts.get('cancel_date')),
         )
 
-    def get_full_building_with_premises(self, cadastral_number: str) -> BuildingParseResult:
+    def get_full_building_with_premises(self, cadastral_number: str, progress_callback=None) -> BuildingParseResult:
         """
         Получение полной информации о здании со всеми помещениями
 
@@ -913,15 +913,16 @@ class NSPDAPIClient:
 
         result.building_relevance = "—"
 
-        # Получаем список помещений
-        feature_id = building_feature.get('id')
-        category_id = building_feature.get('properties', {}).get('category')
+        # Получаем список помещений через ObjDocID + RegistersID
+        opts = building_feature.get('properties', {}).get('options', {})
+        objdoc_id = opts.get('objdocId')
+        registers_id = opts.get('registersId')
 
-        if not feature_id:
-            result.status = "Ошибка: не удалось получить ID здания"
+        if not objdoc_id or not registers_id:
+            result.status = "Ошибка: не удалось получить objdocId/registersId здания"
             return result
 
-        premises_cns = self.get_premises_list_in_building(feature_id, category_id)
+        premises_cns = self.get_premises_list_in_building(objdoc_id, registers_id)
 
         if not premises_cns:
             logger.warning(f"Здание {cadastral_number}: помещения не найдены")
@@ -931,7 +932,8 @@ class NSPDAPIClient:
         logger.info(f"Здание {cadastral_number}: найдено {len(premises_cns)} помещений, загружаю данные...")
 
         premises = []
-        for prem_cn in premises_cns:
+        total_premises = len(premises_cns)
+        for idx, prem_cn in enumerate(premises_cns, 1):
             prem_feature = self.search_cadastral_number(prem_cn)
             if prem_feature:
                 premise = self.parse_premise_data(prem_feature, cadastral_number)
@@ -944,6 +946,8 @@ class NSPDAPIClient:
                     building_cad_number=cadastral_number,
                     cadastral_status="Не найдено в API",
                 ))
+            if progress_callback:
+                progress_callback(idx, total_premises, prem_cn)
 
         result.premises = premises
         result.status = "Успешно"
