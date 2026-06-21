@@ -739,7 +739,7 @@ class NSPDAPIClient:
 
     def get_premises_list_in_building(self, objdoc_id: int, registers_id: int) -> List[str]:
         """
-        Получение списка кадастровых номеров помещений в здании
+        Получение списка кадастровых номеров помещений в здании без координат.
 
         Args:
             objdoc_id: objdocId из options здания
@@ -770,6 +770,44 @@ class NSPDAPIClient:
                     logger.info(f"Найдено помещений: {len(values)}")
                     return values
             logger.warning("Список помещений не найден в ответе API")
+            return []
+        except ValueError as e:
+            logger.error(f"Ошибка парсинга JSON: {e}")
+            return []
+
+    def get_premises_list_by_geom(self, geom_id: int, category_id: int) -> List[str]:
+        """
+        Получение списка кадастровых номеров помещений в здании с координатами границ.
+        Используется когда objdocId/registersId отсутствуют в ответе поиска.
+
+        Args:
+            geom_id: id feature из поискового ответа
+            category_id: category из properties feature
+
+        Returns:
+            Список кадастровых номеров помещений
+        """
+        logger.info(f"Получение помещений здания geom_id={geom_id}, category_id={category_id}")
+
+        url = f"{config.api.base_url}/api/geoportal/v1/tab-group-data"
+        params = {
+            'tabClass': 'objectsList',
+            'categoryId': category_id,
+            'geomId': geom_id,
+        }
+
+        response = self._make_request('GET', url, params=params)
+        if not response:
+            return []
+
+        try:
+            data = response.json()
+            for obj in data.get('object', []):
+                if isinstance(obj, dict) and obj.get('title') == 'Помещения (список)':
+                    values = [v for v in obj.get('value', []) if v]
+                    logger.info(f"Найдено помещений: {len(values)}")
+                    return values
+            logger.warning(f"Список помещений не найден для geomId={geom_id}")
             return []
         except ValueError as e:
             logger.error(f"Ошибка парсинга JSON: {e}")
@@ -913,16 +951,23 @@ class NSPDAPIClient:
 
         result.building_relevance = "—"
 
-        # Получаем список помещений через ObjDocID + RegistersID
+        # Получаем список помещений
         opts = building_feature.get('properties', {}).get('options', {})
         objdoc_id = opts.get('objdocId')
         registers_id = opts.get('registersId')
 
-        if not objdoc_id or not registers_id:
-            result.status = "Ошибка: не удалось получить objdocId/registersId здания"
-            return result
-
-        premises_cns = self.get_premises_list_in_building(objdoc_id, registers_id)
+        if objdoc_id and registers_id:
+            # Здание без координат: используем ObjDocID + RegistersID
+            premises_cns = self.get_premises_list_in_building(objdoc_id, registers_id)
+        else:
+            # Здание с координатами границ: используем geomId + categoryId
+            geom_id = building_feature.get('id')
+            category_id = building_feature.get('properties', {}).get('category')
+            logger.info(f"objdocId/registersId отсутствуют, использую geomId={geom_id}, categoryId={category_id}")
+            if not geom_id:
+                result.status = "Ошибка: не удалось получить идентификаторы здания"
+                return result
+            premises_cns = self.get_premises_list_by_geom(geom_id, category_id)
 
         if not premises_cns:
             logger.warning(f"Здание {cadastral_number}: помещения не найдены")
